@@ -6,32 +6,23 @@ from __future__ import annotations
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 import os
-from missions._common import num, catalog_by_type, ROOT
+from missions._common import ROOT
 from finops import report, sustainability
 from missions import m1_efficiency_audit, m2_inference_levers, m3_purchasing
 
 DAYS = 30
-# one tier down for over-provisioned ("util-lie") GPUs
-RIGHTSIZE_MAP = {"H100": "A100", "H200": "H100", "A100": "A10G", "A10G": "L4", "L4": "L4"}
 
 
 def run(verbose: bool = True) -> dict:
     r1 = m1_efficiency_audit.run(verbose=False)
     r2 = m2_inference_levers.run(verbose=False)
     r3 = m3_purchasing.run(verbose=False)
-    cat = catalog_by_type()
-
     # --- buckets ---
     infer_savings = (r2["baseline_daily"] - r2["optimized_daily"]) * DAYS
     purchasing_savings = r3["on_demand_monthly"] - r3["optimized_monthly"]
 
     idle_savings = r1["idle_waste_daily"] * DAYS
-    rightsize_savings = 0.0
-    for lie in r1["lies"]:
-        cur = lie["gpu_type"]
-        tgt = RIGHTSIZE_MAP.get(cur, cur)
-        delta = num(cat[cur]["on_demand_hr"]) - num(cat[tgt]["on_demand_hr"])
-        rightsize_savings += max(0.0, delta) * 24 * DAYS
+    rightsize_savings = r1.get("rightsize_monthly_savings", 0.0)
 
     levers = {
         "Inference (cascade/cache/batch)": round(infer_savings),
@@ -50,6 +41,13 @@ def run(verbose: bool = True) -> dict:
         "wh_per_query": wh,
         "carbon_g": sustainability.carbon_g(wh, "us-east-1"),
         "best_region": min(sustainability.REGION_CARBON, key=sustainability.REGION_CARBON.get),
+        "cache_economics": r2.get("cache_economics", {}),
+        "reasoning_budget": {
+            **r2.get("reasoning_budget", {}),
+            "cap_savings_monthly": r2.get("reasoning_budget", {}).get("cap_savings_daily", 0.0) * DAYS,
+            "cap_kwh_savings_monthly": r2.get("reasoning_budget", {}).get("cap_wh_savings_daily", 0.0) * DAYS / 1000.0,
+        },
+        "rightsize": r1.get("rightsize_recommendations", []),
     }
 
     md = report.build_report(baseline, optimized, levers, sustainability=sust)

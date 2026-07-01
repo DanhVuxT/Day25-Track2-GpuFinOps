@@ -60,6 +60,23 @@ def break_even_utilization(discount_frac: float) -> float:
     return max(0.0, min(1.0, 1.0 - discount_frac))
 
 
+def cache_break_even_reads(write_cost: float = 1.25, read_discount: float = 0.10) -> float:
+    """Cached reads per written prompt needed before prompt caching is cheaper.
+
+    Cost model, normalized to one uncached input-token unit:
+      no cache: 1 write + N normal reads
+      cache:    write_cost write + N discounted reads
+    """
+    if read_discount >= 1.0:
+        return float("inf")
+    return max(0.0, (write_cost - 1.0) / (1.0 - read_discount))
+
+
+def cache_is_worth_it(avg_reads: float, write_cost: float = 1.25, read_discount: float = 0.10) -> bool:
+    """Return True when observed cached reads clear the economic break-even."""
+    return avg_reads >= cache_break_even_reads(write_cost, read_discount)
+
+
 def recommend_tier(hours_per_day: float, interruptible: bool, reserved_discount: float = 0.45) -> str:
     """Pick a purchasing tier from a workload's duty cycle + interruptibility.
 
